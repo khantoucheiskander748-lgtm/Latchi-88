@@ -5,6 +5,7 @@ import time
 from datetime import datetime, timedelta
 from pyquotex.stable_api import Quotex
 from telethon import TelegramClient
+from telethon.sessions import StringSession
 
 # قراءة القيم من Environment Variables في Render
 EMAIL = os.getenv("QUOTEX_EMAIL")
