@@ -4,17 +4,9 @@ import random
 import time
 from datetime import datetime, timedelta
 from pyquotex.stable_api import Quotex
-from telethon import TelegramClient
-from telethon.sessions import StringSession
 
-# قراءة القيم من Environment Variables في Render
-EMAIL = os.getenv("QUOTEX_EMAIL")
-PASSWORD = os.getenv("QUOTEX_PASSWORD")
-
-API_ID = int(os.getenv("TELEGRAM_API_ID"))
-API_HASH = os.getenv("TELEGRAM_API_HASH")
-CHANNEL = os.getenv("TELEGRAM_CHANNEL")
-SESSION_STRING = os.getenv("TELEGRAM_SESSION")
+# قراءة الكوكيز من Environment Variable
+COOKIE_JSON = os.getenv("QUOTEX_SESSION_JSON")
 
 ASSETS = ["NZDCHF_otc", "USDINR_otc", "USDBDT_otc", "USDARS_otc", "USDPKR_otc"]
 BASE_AMOUNT = 1.0
@@ -101,89 +93,21 @@ async def decide_direction(client, asset):
 
 
 # =========================
-# EXECUTE + RESULT ENGINE
-# =========================
-async def trade_once(client, asset, amount, direction, duration, target_time):
-    now = datetime.now()
-    wait_seconds = (target_time - now).total_seconds() - 2.0
-    if wait_seconds > 0:
-        await asyncio.sleep(wait_seconds)
-
-    try:
-        before_balance = float(await client.get_balance())
-    except:
-        before_balance = 0.0
-
-    order_id = None
-    order_info = None
-    try:
-        print(f"🟡 محاولة شراء: {asset} | {direction}")
-        success, order_info = await client.buy(amount, asset, direction, duration, time_mode="TIME")
-    except Exception as e:
-        print("BUY ERROR:", e)
-        return None, None, None, "none"
-
-    if not success or not isinstance(order_info, dict):
-        print("❌ فشل فتح الصفقة")
-        return None, None, None, "none"
-
-    order_id = order_info.get("id", None)
-
-    # ننتظر انتهاء الصفقة
-    await asyncio.sleep(duration + 10)
-
-    result = "loss"
-    try:
-        history = await client.get_history()
-        if history and "data" in history:
-            for trade in history["data"]:
-                if str(trade.get("id")) == str(order_id):
-                    if trade.get("result", "").lower() == "win":
-                        result = "win"
-                    elif trade.get("result", "").lower() == "loss":
-                        result = "loss"
-                    elif float(trade.get("profit", 0)) > 0:
-                        result = "win"
-                    elif float(trade.get("profit", 0)) < 0:
-                        result = "loss"
-                    break
-        else:
-            final_balance = float(await client.get_balance())
-            if final_balance > before_balance:
-                result = "win"
-    except Exception as e:
-        print("RESULT ERROR:", e)
-
-    return order_id, asset, direction, result
-
-
-# =========================
 # MAIN BOT
 # =========================
 async def main():
-    client = Quotex(email=EMAIL, password=PASSWORD, lang="en")
+    client = Quotex(session_file=COOKIE_JSON, lang="en")
     client.set_account_mode("PRACTICE")
 
     connected, reason = await client.connect()
     if not connected:
         print("❌ فشل الاتصال:", reason)
         return
+    else:
+        print("✅ نجح الاتصال بالمنصة")
 
-    await client.change_account("PRACTICE")
-
-    tg = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
-    await tg.start()
-
-    # تحليل أولي عند التشغيل
-    first_asset = random.choice(ASSETS)
-    first_direction = await decide_direction(client, first_asset)
-    await tg.send_message(CHANNEL,
-        f"🚀✨ LATCHI PRO BOT ✨🚀\n"
-        f"📊 تحليل أولي: الزوج المختار هو {first_asset.upper()}\n"
-        f"✅ الدخول في الدقيقة القادمة على الشمعة الجديدة\n"
-        f"{'🔼 CALL' if first_direction=='call' else '⬇️ PUT'} حسب التحليل\n\n"
-        "#LATCHI_PRO #QUOTEX"
-    )
+    balance = await client.get_balance()
+    print(f"💰 Current balance: {balance}")
 
     while True:
         try:
@@ -194,36 +118,20 @@ async def main():
             next_minute = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
             target_time = next_minute.replace(second=0)
 
-            preview_msg = f"""📊 صفقة جديدة LATCHI DZ VIP 🌟:
+            print(f"📊 صفقة جديدة: {asset.upper()} | {direction.upper()} | {target_time.strftime('%H:%M')}")
 
-{asset.upper()} | M1 | {target_time.strftime("%H:%M")} | {"CALL 🔼" if direction=="call" else "PUT ⬇️"}
+            success, order_info = await client.buy(BASE_AMOUNT, asset, direction, 60, time_mode="TIME")
 
-#QUOTEX"""
-            await tg.send_message(CHANNEL, preview_msg)
-
-            order_id, asset_used, dir_used, result = await trade_once(
-                client, asset, BASE_AMOUNT, direction, 60, target_time
-            )
-
-            if dir_used is None:
-                await tg.send_message(CHANNEL, f"⚠️ الصفقة لم تنفذ | {asset.upper()}")
-                await asyncio.sleep(5)
-                continue
-
-            if result == "win":
-                await tg.send_message(CHANNEL, f"🟢 ربح ✅ | {asset_used.upper()} | {dir_used.upper()}")
-            elif result == "loss":
-                await tg.send_message(CHANNEL, f"🔴 خسارة ❌ | {asset_used.upper()} | {dir_used.upper()}")
+            if success:
+                print(f"✅ الصفقة فتحت: {order_info}")
             else:
-                await tg.send_message(CHANNEL, f"⚠️ النتيجة غير معروفة | {asset_used.upper()}")
+                print(f"❌ فشل فتح الصفقة على {asset.upper()}")
 
-            # ننتظر قليلاً قبل الصفقة القادمة
             await asyncio.sleep(10)
 
         except Exception as e:
             print("MAIN LOOP ERROR:", e)
             await asyncio.sleep(5)
-
 
 # تشغيل البوت
 asyncio.run(main())
